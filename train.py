@@ -15,6 +15,10 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import lpips
 
+import time
+import datetime
+import pytz
+
 with open('./cfg/setting.yaml', 'r') as f:
     args = EasyDict(yaml.load(f, Loader=yaml.SafeLoader))
 
@@ -33,7 +37,7 @@ def load_checkpoint(model, optimizer , optimizer_secret, filename):
         model.load_state_dict(checkpoint['state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         optimizer_secret.load_state_dict(checkpoint['secret_optimizer'])
-        
+
         print("=> loaded checkpoint '{}' (step {})"
                   .format(filename, checkpoint['step']))
     else:
@@ -44,7 +48,7 @@ def load_checkpoint(model, optimizer , optimizer_secret, filename):
 def main():
     for arg in args.items():
         print(f"{arg}")
-    
+
     log_path = os.path.join(args.logs_path, str(args.exp_name))
     writer = SummaryWriter(log_path)
 
@@ -81,8 +85,10 @@ def main():
     width = 400
 
     total_steps = len(dataset) // args.batch_size + 1
-    
 
+    encoder_state, decoder_state = None,None
+
+    start_time = time.time()
     while global_step < args.num_steps:
         for _ in range(min(total_steps, args.num_steps - global_step)):
             image_input, secret_input = next(iter(dataloader))
@@ -92,13 +98,11 @@ def main():
             no_im_loss = global_step < args.no_im_loss_steps
             l2_loss_scale = min(args.l2_loss_scale * global_step / args.l2_loss_ramp, args.l2_loss_scale)
             lpips_loss_scale = min(args.lpips_loss_scale * global_step / args.lpips_loss_ramp, args.lpips_loss_scale)
-            secret_loss_scale = min(args.secret_loss_scale * global_step / args.secret_loss_ramp,
-                                    args.secret_loss_scale)
+            secret_loss_scale = min(args.secret_loss_scale * global_step / args.secret_loss_ramp, args.secret_loss_scale)
             G_loss_scale = min(args.G_loss_scale * global_step / args.G_loss_ramp, args.G_loss_scale)
             l2_edge_gain = 0
             if global_step > args.l2_edge_delay:
-                l2_edge_gain = min(args.l2_edge_gain * (global_step - args.l2_edge_delay) / args.l2_edge_ramp,
-                                   args.l2_edge_gain)
+                l2_edge_gain = min(args.l2_edge_gain * (global_step - args.l2_edge_delay) / args.l2_edge_ramp, args.l2_edge_gain)
 
             rnd_tran = min(args.rnd_trans * global_step / args.rnd_trans_ramp, args.rnd_trans)
             rnd_tran = np.random.uniform() * rnd_tran
@@ -129,17 +133,35 @@ def main():
 
             if global_step % 1000 == 0:
                 encoder_state = {'step': global_step + 1, 'state_dict': encoder.state_dict(),
-                        'optimizer': optimize_loss.state_dict() , 'secret_optimizer': optimize_secret_loss.state_dict()}
+                                 'optimizer': optimize_loss.state_dict(), 'secret_optimizer': optimize_secret_loss.state_dict()}
                 torch.save(encoder_state, os.path.join(args.saved_models, "encoder.pth"))
 
                 decoder_state = {'step': global_step + 1, 'state_dict': decoder.state_dict(),
-                        'optimizer': optimize_loss.state_dict() , 'secret_optimizer': optimize_secret_loss.state_dict()}
+                                 'optimizer': optimize_loss.state_dict(), 'secret_optimizer': optimize_secret_loss.state_dict()}
                 torch.save(decoder_state, os.path.join(args.saved_models, "decoder.pth"))
 
             if global_step % 100 == 0:
-                print(f'Iter #{global_step}: Loss = {loss:.4f}, secret loss = {secret_loss:.4f}, D_loss = {D_loss:.4f}, bit_acc = {bit_acc:.4f}, str_acc = {str_acc:.4f}', flush=True)
+                elapsed_time = time.time() - start_time
+                steps_remaining = args.num_steps - global_step
+                time_per_step = elapsed_time / global_step
+                eta_seconds = steps_remaining * time_per_step
+                eta = datetime.datetime.now(pytz.timezone('Asia/Kolkata')) + datetime.timedelta(seconds=eta_seconds)
+                eta_str = eta.strftime('%Y-%m-%d %H:%M:%S %Z')
+                eta_h, eta_m = divmod(eta_seconds, 3600)
+                eta_m, eta_s = divmod(eta_m, 60)
+
+                print(f'Iter #{global_step}: Loss = {loss:.4f}, secret loss = {secret_loss:.4f}, D_loss = {D_loss:.4f}, '
+                      f'bit_acc = {bit_acc:.4f}, str_acc = {str_acc:.4f}, Time Taken = {elapsed_time:.2f}s, '
+                      f'ETA = {int(eta_h)}h {int(eta_m)}m {int(eta_s)}s ({eta_str})', flush=True)
+                
+    encoder_state = {'step': global_step + 1, 'state_dict': encoder.state_dict(),'optimizer': optimize_loss.state_dict() , 'secret_optimizer': optimize_secret_loss.state_dict()}
+    torch.save(encoder_state, os.path.join(args.saved_models, "encoder_final.pth"))
+
+    decoder_state = {'step': global_step + 1, 'state_dict': decoder.state_dict(),'optimizer': optimize_loss.state_dict() , 'secret_optimizer': optimize_secret_loss.state_dict()}
+    torch.save(decoder_state, os.path.join(args.saved_models, "decoder_final.pth"))
+
     writer.close()
-    
+
 
 
 if __name__ == '__main__':
