@@ -311,7 +311,7 @@ def build_model(encoder, decoder, discriminator, lpips_fn, secret_input, image_i
 
     input_warped = torchgeometry.warp_perspective(image_input, M[:, 1, :, :], dsize=(400, 400), flags='bilinear')
     mask_warped = torchgeometry.warp_perspective(torch.ones_like(input_warped), M[:, 1, :, :], dsize=(400, 400),
-                                                 flags='bilinear')
+                                                flags='bilinear')
     input_warped += (1 - mask_warped) * image_input
 
     residual_warped = encoder((secret_input, input_warped))
@@ -321,31 +321,36 @@ def build_model(encoder, decoder, discriminator, lpips_fn, secret_input, image_i
 
     if borders == 'no_edge':
         encoded_image = image_input + residual
+        encoded_image = torch.clamp(encoded_image, min=0.0, max=1.0)
     elif borders == 'black':
         encoded_image = residual_warped + input_warped
         encoded_image = torchgeometry.warp_perspective(encoded_image, M[:, 0, :, :], dsize=(400, 400), flags='bilinear')
         input_unwarped = torchgeometry.warp_perspective(image_input, M[:, 0, :, :], dsize=(400, 400), flags='bilinear')
+        encoded_image = torch.clamp(encoded_image, min=0.0, max=1.0)
     elif borders.startswith('random'):
         mask = torchgeometry.warp_perspective(torch.ones_like(residual), M[:, 0, :, :], dsize=(400, 400),
-                                              flags='bilinear')
+                                            flags='bilinear')
         encoded_image = residual_warped + input_unwarped
         encoded_image = torchgeometry.warp_perspective(encoded_image, M[:, 0, :, :], dsize=(400, 400), flags='bilinear')
         input_unwarped = torchgeometry.warp_perspective(input_warped, M[:, 0, :, :], dsize=(400, 400), flags='bilinear')
         ch = 3 if borders.endswith('rgb') else 1
         encoded_image += (1 - mask) * torch.ones_like(residual) * torch.rand([ch])
+        encoded_image = torch.clamp(encoded_image, min=0.0, max=1.0)
     elif borders == 'white':
         mask = torchgeometry.warp_perspective(torch.ones_like(residual), M[:, 0, :, :], dsize=(400, 400),
-                                              flags='bilinear')
+                                            flags='bilinear')
         encoded_image = residual_warped + input_warped
         encoded_image = torchgeometry.warp_perspective(encoded_image, M[:, 0, :, :], dsize=(400, 400), flags='bilinear')
         input_unwarped = torchgeometry.warp_perspective(input_warped, M[:, 0, :, :], dsize=(400, 400), flags='bilinear')
         encoded_image += (1 - mask) * torch.ones_like(residual)
+        encoded_image = torch.clamp(encoded_image, min=0.0, max=1.0)
     elif borders == 'image':
         mask = torchgeometry.warp_perspective(torch.ones_like(residual), M[:, 0, :, :], dsize=(400, 400),
-                                              flags='bilinear')
+                                            flags='bilinear')
         encoded_image = residual_warped + input_warped
         encoded_image = torchgeometry.warp_perspective(encoded_image, M[:, 0, :, :], dsize=(400, 400), flags='bilinear')
         encoded_image += (1 - mask) * torch.roll(image_input, 1, 0)
+        encoded_image = torch.clamp(encoded_image, min=0.0, max=1.0)
 
     if borders == 'no_edge':
         D_output_real, _ = discriminator(image_input)
