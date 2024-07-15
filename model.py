@@ -11,6 +11,62 @@ from kornia import color
 import torch.nn.functional as F
 from torchvision import transforms
 
+def rgb_to_hsi(rgb_image): # edits
+
+    r, g, b = rgb_image[:, 0, :, :], rgb_image[:, 1, :, :], rgb_image[:, 2, :, :]
+
+    I = (r + g + b) / 3.0
+
+    epsilon = 1e-8
+    S = 1 - torch.min(torch.min(r, g), b) / (I + epsilon)
+
+    theta = torch.acos(0.5 * ((r - g) + (r - b)) / torch.sqrt((r - g)**2 + (r - b) * (g - b) + epsilon))
+    H = theta * (torch.where(b <= g, torch.ones_like(theta), -torch.ones_like(theta))) / (2 * 3.14159)
+
+    hsi_image = torch.stack((H, S, I), dim=1)
+    
+    return hsi_image
+
+def hsi_to_rgb(hsi_image): # edits
+    
+    H, S, I = hsi_image[:, 0, :, :], hsi_image[:, 1, :, :], hsi_image[:, 2, :, :]
+    
+    # Compute RGB components
+    H *= 2 * 3.14159
+    H = H.unsqueeze(1)
+    
+    # Calculate RGB values
+    def hue_to_rgb(p, q, t):
+        t = torch.remainder(t, 1.0)
+        return torch.where(t < 1/6, p + (q - p) * 6 * t,
+                           torch.where(t < 1/2, q,
+                                       torch.where(t < 2/3, p + (q - p) * (2/3 - t) * 6, p)))
+
+    def hsi_to_rgb_single(h, s, i):
+        h /= (2 * 3.14159)
+        h = h.unsqueeze(1)
+
+        z = 1 - torch.abs(torch.remainder(h * 6, 2) - 1)
+
+        chroma = i * (1 - s)
+        x = chroma * z
+
+        m = i - chroma
+
+        r = torch.where(h < 1/3, torch.stack([chroma, x, torch.zeros_like(h)]),
+                        torch.where(h < 2/3, torch.stack([x, chroma, torch.zeros_like(h)]),
+                                    torch.stack([torch.zeros_like(h), chroma, x])))
+        r += m
+
+        return r
+
+    r = hsi_to_rgb_single(H, S, I)
+    
+    rgb_image = torch.stack((r[:, 0, :, :], r[:, 1, :, :], r[:, 2, :, :]), dim=1)
+    
+    rgb_image = torch.clamp(rgb_image, 0, 1)
+    
+    return rgb_image
 
 class Dense(nn.Module):
     def __init__(self, in_features, out_features, activation='relu', kernel_initializer='he_normal'):
@@ -89,6 +145,7 @@ class StegaStampEncoder(nn.Module):
     def forward(self, inputs):
         secrect, image = inputs
         secrect = secrect - .5
+        image = rgb_to_hsi(image) # edits
         image = image - .5
 
         secrect = self.secret_dense(secrect)
@@ -114,6 +171,7 @@ class StegaStampEncoder(nn.Module):
         merge9 = torch.cat([conv1, up9, inputs], dim=1)
         conv9 = self.conv9(merge9)
         residual = self.residual(conv9)
+        residual = hsi_to_rgb(residual) # edits
         return residual
 
 
